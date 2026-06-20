@@ -147,3 +147,6 @@ backend/data/
 *.db
 *.sqlite
 *.sqlite3
+
+# Generated PDFs
+*.pdf

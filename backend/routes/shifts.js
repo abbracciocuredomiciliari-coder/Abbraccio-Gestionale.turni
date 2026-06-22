@@ -8,6 +8,7 @@ router.get('/', authenticate, async (req, res) => {
   try {
     const rows = await db.all(
       `SELECT id, code, name, start_time, end_time, duration_hours, required_staff,
+              required_staff_saturday, required_staff_sunday, required_staff_holiday,
               color, is_active, required_skills, min_skilled_staff
        FROM shift_types
        ORDER BY start_time`
@@ -27,8 +28,9 @@ router.get('/', authenticate, async (req, res) => {
 
 router.put('/:id', authenticate, requireRole('coordinator'), async (req, res) => {
   try {
-    const { required_staff, duration_hours, start_time, end_time,
-            is_active, required_skills, min_skilled_staff } = req.body;
+    const { code, name, required_staff, duration_hours, start_time, end_time,
+            is_active, required_skills, min_skilled_staff,
+            required_staff_saturday, required_staff_sunday, required_staff_holiday } = req.body;
 
     // Normalizza required_skills: accetta array o stringa JSON
     let skillsJson = undefined;
@@ -44,15 +46,24 @@ router.put('/:id', authenticate, requireRole('coordinator'), async (req, res) =>
 
     const update = await db.run(
       `UPDATE shift_types
-       SET required_staff      = COALESCE(?, required_staff),
-           duration_hours      = COALESCE(?, duration_hours),
-           start_time          = COALESCE(?, start_time),
-           end_time            = COALESCE(?, end_time),
-           is_active           = COALESCE(?, is_active),
-           required_skills     = CASE WHEN ? IS NOT NULL THEN ? ELSE required_skills END,
-           min_skilled_staff   = COALESCE(?, min_skilled_staff)
+       SET code                    = COALESCE(?, code),
+           name                    = COALESCE(?, name),
+           required_staff          = COALESCE(?, required_staff),
+           required_staff_saturday = ?,
+           required_staff_sunday   = ?,
+           required_staff_holiday  = ?,
+           duration_hours          = COALESCE(?, duration_hours),
+           start_time              = COALESCE(?, start_time),
+           end_time                = COALESCE(?, end_time),
+           is_active               = COALESCE(?, is_active),
+           required_skills         = CASE WHEN ? IS NOT NULL THEN ? ELSE required_skills END,
+           min_skilled_staff       = COALESCE(?, min_skilled_staff)
        WHERE id = ?`,
-      [required_staff, duration_hours, start_time, end_time, is_active,
+      [code || null, name || null, required_staff,
+       required_staff_saturday !== undefined ? required_staff_saturday : null,
+       required_staff_sunday   !== undefined ? required_staff_sunday   : null,
+       required_staff_holiday  !== undefined ? required_staff_holiday  : null,
+       duration_hours, start_time, end_time, is_active,
        skillsJson, skillsJson,
        min_skilled_staff ?? null, req.params.id]
     );
@@ -63,6 +74,7 @@ router.put('/:id', authenticate, requireRole('coordinator'), async (req, res) =>
 
     const row = await db.get(
       `SELECT id, code, name, start_time, end_time, duration_hours, required_staff,
+              required_staff_saturday, required_staff_sunday, required_staff_holiday,
               color, is_active, required_skills, min_skilled_staff
        FROM shift_types WHERE id = ?`,
       [req.params.id]

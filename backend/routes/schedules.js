@@ -20,11 +20,20 @@ router.get('/', authenticate, async (req, res) => {
 router.get('/:year/:month', authenticate, async (req, res) => {
   try {
     const { year, month } = req.params;
+    const department_id = req.query.department_id || null;
 
-    const schedule = await db.get(
-      'SELECT id, year, month, status FROM schedules WHERE year = ? AND month = ?',
-      [year, month]
-    );
+    let schedule;
+    if (department_id) {
+      schedule = await db.get(
+        'SELECT id, year, month, status FROM schedules WHERE year = ? AND month = ? AND department_id = ?',
+        [year, month, department_id]
+      );
+    } else {
+      schedule = await db.get(
+        'SELECT id, year, month, status FROM schedules WHERE year = ? AND month = ? ORDER BY id DESC LIMIT 1',
+        [year, month]
+      );
+    }
 
     if (!schedule) {
       return res.status(404).json({ error: 'Planning non trovato' });
@@ -402,6 +411,78 @@ router.post('/generate-all', authenticate, requireRole('coordinator'), async (re
       errors:  err,
       results,
     });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore server' });
+  }
+});
+
+// DELETE /schedules/:year/:month — cancella planning per anno/mese del reparto
+router.delete('/:year/:month', authenticate, requireRole('coordinator'), async (req, res) => {
+  try {
+    const { year, month } = req.params;
+    const department_id = req.query.department_id || null;
+
+    let sch;
+    if (department_id) {
+      sch = await db.get(
+        `SELECT id FROM schedules WHERE year=? AND month=? AND department_id=?`,
+        [year, month, department_id]
+      );
+    } else {
+      sch = await db.get(
+        `SELECT id FROM schedules WHERE year=? AND month=? ORDER BY id DESC LIMIT 1`,
+        [year, month]
+      );
+    }
+    if (!sch) return res.status(404).json({ error: 'Planning non trovato' });
+
+    await db.run(`DELETE FROM schedule_assignments WHERE schedule_id=?`, [sch.id]);
+    await db.run(`DELETE FROM schedules WHERE id=?`, [sch.id]);
+    res.json({ ok: true, deleted_schedule_id: sch.id });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore server' });
+  }
+});
+
+// PATCH /schedules/:scheduleId/assignments — modifica singola cella (coordinatore)
+router.patch('/:scheduleId/assignments', authenticate, requireRole('coordinator'), async (req, res) => {
+  try {
+    const { scheduleId } = req.params;
+    const { user_id, work_date, shift_type_id } = req.body;
+
+    if (!user_id || !work_date) {
+      return res.status(400).json({ error: 'user_id e work_date obbligatori' });
+    }
+
+    if (!shift_type_id) {
+      // Elimina l'assegnazione (giorno libero)
+      await db.run(
+        `DELETE FROM schedule_assignments WHERE schedule_id = ? AND user_id = ? AND work_date = ?`,
+        [scheduleId, user_id, work_date]
+      );
+    } else {
+      // Upsert: aggiorna se esiste, inserisce se no
+      const existing = await db.get(
+        `SELECT id FROM schedule_assignments WHERE schedule_id = ? AND user_id = ? AND work_date = ?`,
+        [scheduleId, user_id, work_date]
+      );
+      if (existing) {
+        await db.run(
+          `UPDATE schedule_assignments SET shift_type_id = ? WHERE id = ?`,
+          [shift_type_id, existing.id]
+        );
+      } else {
+        await db.run(
+          `INSERT INTO schedule_assignments (schedule_id, user_id, work_date, shift_type_id, is_overtime)
+           VALUES (?, ?, ?, ?, 0)`,
+          [scheduleId, user_id, work_date, shift_type_id]
+        );
+      }
+    }
+
+    res.json({ ok: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore server' });

@@ -25,13 +25,14 @@
  *  H13 - Capo-turno: ogni turno con min_capo_turno>0 deve avere almeno N infermieri
  *         con clinical_role IN ('CAPO_TURNO','RESPONSABILE').
  *         Il solver non nomina mai un CAPO_TURNO — apre capo_turno_pending se assente.
+ *  H14 - Massimo giorni consecutivi: blocca l'assegnazione se l'operatore ha già
+ *         raggiunto max_consecutive_days giorni lavorativi consecutivi (da work_rules).
  *
  * Vincoli SOFT (via equity.js — minimizzazione varianza):
  *   E1 - Equità carico composito (composite_score storico + intra-mese)
  *   E2 - Equità notti (priorità a chi ne ha meno nello storico)
  *   E3 - Equità weekend (priorità a chi ne ha meno)
  *   S4 - Preferenza "prefer_not" (pena addizionale)
- *   S5 - Massimo turni consecutivi senza riposo
  */
 
 const { chooseBestCandidate, applyAssignment, computeLoads } = require('./equity');
@@ -40,7 +41,7 @@ const { isFullDayBlocked, isShiftBlocked, getExemptionBlock } = require('./absen
 const { canNurseWorkShift, selectWithSkillMix } = require('./skills');
 
 class ConstraintSolver {
-  constructor({ staff, shifts, daysInMonth, year, month, constraints, unavailability, allowOvertime = false, minRestHours = 11, shiftWeights = {}, historicAssignments = [], preferenceMap = null, absenceMap = null, skillMap = null, department = null, teamData = null }) {
+  constructor({ staff, shifts, daysInMonth, year, month, constraints, unavailability, allowOvertime = false, minRestHours = 11, maxConsecutiveDays = 6, shiftWeights = {}, historicAssignments = [], preferenceMap = null, absenceMap = null, skillMap = null, department = null, teamData = null }) {
     this.staff = staff;           // [{id, first_name, last_name}]
     this.shifts = shifts;         // [{id, code, required_staff, duration_hours, is_night}]
     this.days = daysInMonth;
@@ -62,6 +63,7 @@ class ConstraintSolver {
     this.capo_turno_pending = [];
     this.allowOvertime = allowOvertime;
     this.minRestHours = minRestHours;
+    this.maxConsecutiveDays = maxConsecutiveDays;
     this.weights = {
       night:      shiftWeights.night      ?? 1.5,
       weekend:    shiftWeights.weekend    ?? 1.2,
@@ -241,6 +243,12 @@ class ConstraintSolver {
     const totalShifts = new Array(this.staff.length).fill(0);
     const nightShifts = new Array(this.staff.length).fill(0);
     const weekendShifts = new Array(this.staff.length).fill(0);
+    const saturdayShifts = new Array(this.staff.length).fill(0);
+    const sundayShifts = new Array(this.staff.length).fill(0);
+    const hoursWorked = new Array(this.staff.length).fill(0); // ore totali lavorate nel mese
+    // weekendWorked[w] = Set di numeri di settimana ISO in cui l'operatore ha già lavorato nell'altro giorno
+    // Serve per evitare che chi fa sabato faccia anche domenica dello stesso weekend
+    const workedWeekends = new Array(this.staff.length).fill(null).map(() => new Map()); // w -> { weekKey -> {sat, sun} }
     const shiftTypeCount = {}; // w -> {shiftCode -> count}
     for (let w = 0; w < this.staff.length; w++) shiftTypeCount[w] = {};
 
@@ -259,7 +267,12 @@ class ConstraintSolver {
 
       for (const shift of shiftsOrdered) {
         const s = this.shiftIdx(shift.id);
-        const needed = shift.required_staff || 1;
+        const _dow = this.dayOfWeek(d);
+        const needed = _dow === 6 && shift.required_staff_saturday != null
+          ? shift.required_staff_saturday
+          : _dow === 0 && shift.required_staff_sunday != null
+          ? shift.required_staff_sunday
+          : shift.required_staff || 1;
 
         // ── Determina modalità assegnazione per questo turno ──────────────
         const assignMode = shift.assignment_mode || 'FREE';
@@ -288,6 +301,20 @@ class ConstraintSolver {
           if (doubleShiftToday.has(w)) return null;
           if (this.x[w][d][s] === -1) return null;
           if (d > 0 && this._workedNightOn(w, d - 1)) return null;
+          // H-CONSEC: blocco hard giorni consecutivi
+          if (this._consecutiveDays(w, d) >= this.maxConsecutiveDays) return null;
+          // H-REST: riposo minimo inter-giornaliero (minRestHours, default 11h)
+          // Verifica che tra la fine del turno di ieri e l'inizio di oggi ci siano >= minRestHours
+          if (d > 0) {
+            const prevEndHour = this._getWorkerShiftEndHour(w, d - 1);
+            if (prevEndHour > 0) {
+              const prevEndMin  = prevEndHour * 60;
+              const currStartH  = this._getShiftStartHour(shift);
+              const currStartMin = currStartH * 60 + 24 * 60; // giorno dopo
+              const restMin = currStartMin - prevEndMin;
+              if (restMin < this.minRestHours * 60) return null;
+            }
+          }
           if (alreadyAssigned && this.allowOvertime) {
             const prevEnd   = this._getWorkerShiftEndHour(w, d);
             const nextStart = this._getShiftStartHour(shift);
@@ -302,8 +329,40 @@ class ConstraintSolver {
           const isWeekendD = this.isWeekend(d);
 
           let score = load ? load.composite_score : 0;
-          if (shift.is_night) score += (load?.nights   ?? 0) * 6;
-          if (isWeekendD)     score += (load?.weekends  ?? 0) * 4;
+          // Equità notti (storico + intra-mese)
+          if (shift.is_night) score += ((load?.nights ?? 0) + nightShifts[w]) * 10;
+          // Equità weekend storico
+          if (isWeekendD) score += (load?.weekends ?? 0) * 15;
+          // Bilanciamento sabati vs domeniche: preferisce chi ha meno dell'altro tipo
+          // Se oggi è domenica e l'operatore ha già più domeniche che sabati → penalizza
+          // Questo garantisce rotazione: chi ha fatto 1 sab e 0 dom è preferito per le domeniche
+          if (_dow === 0) {
+            // domenica: penalizza se ha già tante domeniche, premia se ha tanti sabati
+            score += sundayShifts[w] * 50;
+            score -= saturdayShifts[w] * 25; // bonus: ha già fatto sabati, ora tocca domeniche
+          }
+          if (_dow === 6) {
+            // sabato: penalizza se ha già tanti sabati, premia se ha tante domeniche
+            score += saturdayShifts[w] * 50;
+            score -= sundayShifts[w] * 25; // bonus: ha già fatto domeniche, ora tocca sabati
+          }
+          // Anti-clustering stesso weekend: penalizza chi ha già lavorato nell'altro giorno
+          const weekKey = Math.floor(d / 7);
+          const wkEntry = workedWeekends[w].get(weekKey) || { sat: false, sun: false };
+          if (_dow === 0 && wkEntry.sat) score += 150;
+          if (_dow === 6 && wkEntry.sun) score += 150;
+          // Equità ore lavorate nel mese (penalizza chi ha già più ore — bilancia G14 vs M7)
+          score += hoursWorked[w] * 1.5;
+          // Equità tipo turno intra-mese — peso alto per evitare concentrazione
+          // Penalizza chi ha già fatto molte volte QUESTO tipo rispetto alla media degli altri
+          const myTypeCount = shiftTypeCount[w][shift.code] || 0;
+          const otherCounts = this.staff
+            .map((_, ww) => shiftTypeCount[ww][shift.code] || 0)
+            .filter((_, ww) => ww !== w);
+          const avgOthers = otherCounts.length > 0
+            ? otherCounts.reduce((a,b) => a+b, 0) / otherCounts.length
+            : 0;
+          score += (myTypeCount - avgOthers) * 50; // +50pt per ogni unità sopra la media
           if (isPrefNot)      score += 20;
           score += this._consecutiveDays(w, d) * 8;
           if (alreadyAssigned) score += 100;
@@ -337,6 +396,12 @@ class ConstraintSolver {
           } else {
             candidates.push({ ...c, inTeam: false });
           }
+        }
+
+        // Aggiunge jitter piccolo (0-2pt) per rompere i pareggi — garantisce
+        // distribuzione uniforme quando tutti i candidati hanno score identico
+        for (const c of [...teamPool, ...fallbackPool, ...candidates]) {
+          c.score += Math.random() * 2;
         }
 
         // In TEAM/MIXED: pool squadra ordinato per score, poi fallback per score
@@ -552,8 +617,21 @@ class ConstraintSolver {
             assignedToday.add(w);
           }
           totalShifts[w]++;
+          hoursWorked[w] += shift.duration_hours || 8;
           if (shift.is_night) nightShifts[w]++;
           if (isWeekendDay) weekendShifts[w]++;
+          if (_dow === 6) {
+            saturdayShifts[w]++;
+            const wk = Math.floor(d / 7);
+            const e = workedWeekends[w].get(wk) || { sat: false, sun: false };
+            workedWeekends[w].set(wk, { ...e, sat: true });
+          }
+          if (_dow === 0) {
+            sundayShifts[w]++;
+            const wk = Math.floor(d / 7);
+            const e = workedWeekends[w].get(wk) || { sat: false, sun: false };
+            workedWeekends[w].set(wk, { ...e, sun: true });
+          }
           shiftTypeCount[w][shift.code] = (shiftTypeCount[w][shift.code] || 0) + 1;
 
           // Aggiorna carico equity in tempo reale (per decisioni future nello stesso solve)
@@ -660,7 +738,12 @@ class ConstraintSolver {
 
       for (const shift of shiftsOrdered) {
         const s = this.shiftIdx(shift.id);
-        const needed = shift.required_staff || 1;
+        const _dow2 = this.dayOfWeek(d);
+        const needed = _dow2 === 6 && shift.required_staff_saturday != null
+          ? shift.required_staff_saturday
+          : _dow2 === 0 && shift.required_staff_sunday != null
+          ? shift.required_staff_sunday
+          : shift.required_staff || 1;
 
         // Determina team pool (identico a _greedyConstruct)
         const assignMode = shift.assignment_mode || 'FREE';
@@ -687,6 +770,16 @@ class ConstraintSolver {
           // Controlla sia lo stato x persistente che le notti assegnate in questa finestra
           if (d > 0 && this._workedNightOn(w, d - 1)) continue;
           if (nightWorkedInWindow.get(d - 1)?.has(w)) continue;
+          // H-CONSEC: blocco hard giorni consecutivi
+          if (this._consecutiveDays(w, d) >= this.maxConsecutiveDays) continue;
+          // H-REST: riposo minimo inter-giornaliero
+          if (d > 0) {
+            const prevEndHour = this._getWorkerShiftEndHour(w, d - 1);
+            if (prevEndHour > 0) {
+              const restMin = (this._getShiftStartHour(shift) + 24) * 60 - prevEndHour * 60;
+              if (restMin < this.minRestHours * 60) continue;
+            }
+          }
 
           const wConstraints = this.constraints[this.staff[w].id] || {};
           const isPrefNot = wConstraints[shift.id] === 'prefer_not';
@@ -772,6 +865,30 @@ class ConstraintSolver {
     const avgTotal = totals.reduce((a, b) => a + b, 0) / totals.length;
     penalty += totals.reduce((sum, t) => sum + Math.abs(t - avgTotal), 0) * 10;
 
+    // S1b: varianza ore lavorate (bilancia G14 vs M7)
+    const hoursArr = this.staff.map((_, w) => {
+      let h = 0;
+      for (let d = 0; d < this.days; d++)
+        for (let s = 0; s < this.shifts.length; s++)
+          if (this.x[w][d][s] === 1) h += this.shifts[s].duration_hours || 8;
+      return h;
+    });
+    const avgHours = hoursArr.reduce((a, b) => a + b, 0) / hoursArr.length;
+    penalty += hoursArr.reduce((sum, h) => sum + Math.abs(h - avgHours), 0) * 8;
+
+    // S1c: varianza per tipo turno (penalizza concentrazione G su stessa persona)
+    const shiftTypeCounts = this.shifts.filter(sh => sh.code !== 'R').map(sh => {
+      const sIdx = this.shiftIdx(sh.id);
+      const counts = this.staff.map((_, w) => {
+        let cnt = 0;
+        for (let d = 0; d < this.days; d++) if (this.x[w][d][sIdx] === 1) cnt++;
+        return cnt;
+      });
+      const avg = counts.reduce((a, b) => a + b, 0) / counts.length;
+      return counts.reduce((sum, c) => sum + Math.abs(c - avg), 0) * 25;
+    });
+    penalty += shiftTypeCounts.reduce((a, b) => a + b, 0);
+
     // S2: varianza turni notturni
     const nights = this.staff.map((_, w) => {
       let cnt = 0;
@@ -823,11 +940,16 @@ class ConstraintSolver {
 
     // H1 violazioni: copertura insufficiente (penalità altissima)
     for (let d = 0; d < this.days; d++) {
+      const _dowP = this.dayOfWeek(d);
       for (const shift of this.shifts) {
         if (shift.code === 'R') continue;
         const s = this.shiftIdx(shift.id);
         const assigned = this.staff.filter((_, w) => this.x[w][d][s] === 1).length;
-        const needed = shift.required_staff || 1;
+        const needed = _dowP === 6 && shift.required_staff_saturday != null
+          ? shift.required_staff_saturday
+          : _dowP === 0 && shift.required_staff_sunday != null
+          ? shift.required_staff_sunday
+          : shift.required_staff || 1;
         if (assigned < needed) penalty += 1000 * (needed - assigned);
       }
     }
@@ -838,6 +960,28 @@ class ConstraintSolver {
         if (this._workedNightOn(w, d - 1)) {
           const workedToday = this.shifts.some((_, s) => this.x[w][d][s] === 1);
           if (workedToday) penalty += 5000;
+        }
+      }
+    }
+
+    // H-REST violazioni: riposo inter-giornaliero < minRestHours
+    for (let w = 0; w < this.staff.length; w++) {
+      for (let d = 1; d < this.days; d++) {
+        const prevEndHour = this._getWorkerShiftEndHour(w, d - 1);
+        if (prevEndHour === 0) continue;
+        for (let s = 0; s < this.shifts.length; s++) {
+          if (this.x[w][d][s] !== 1) continue;
+          const restMin = (this._getShiftStartHour(this.shifts[s]) + 24) * 60 - prevEndHour * 60;
+          if (restMin < this.minRestHours * 60) {
+            penalty += 3000;
+            this.violations.push({
+              type: 'REST_VIOLATION',
+              day: d + 1,
+              worker: this.staff[w].id,
+              shift: this.shifts[s].code,
+              rest_hours: restMin / 60,
+            });
+          }
         }
       }
     }

@@ -92,17 +92,21 @@ router.get('/:id', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.post('/', authenticate, requireRole('area_manager'), async (req, res) => {
+router.post('/', authenticate, async (req, res) => {
+  const allowed = ['admin','area_manager'];
+  if (!allowed.includes(req.user.role))
+    return res.status(403).json({ error: 'Non autorizzato.' });
   try {
     const { name, code, notes, area_manager_id } = req.body;
-    if (!name || !code) return res.status(400).json({ error: 'name e code obbligatori.' });
+    if (!name) return res.status(400).json({ error: 'name obbligatorio.' });
+    const safeCode = (code || name.toUpperCase().replace(/\s+/g,'_').slice(0,10) + '_' + Date.now().toString().slice(-4));
     // admin può assegnare un area_manager diverso; area_manager crea solo per sé
     const managerId = (req.user.role === 'admin' && area_manager_id)
       ? area_manager_id
       : req.user.id;
     const ins = await db.run(
       `INSERT INTO areas (name, code, area_manager_id, notes) VALUES (?,?,?,?)`,
-      [name, code.toUpperCase(), managerId, notes || null]
+      [name, safeCode, managerId, notes || null]
     );
     const row = await db.get(
       `SELECT a.*, u.first_name || ' ' || u.last_name AS manager_name

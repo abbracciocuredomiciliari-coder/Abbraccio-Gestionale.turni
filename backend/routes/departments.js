@@ -56,10 +56,12 @@ router.get('/', authenticate, async (req, res) => {
       rows = await db.all(
         `SELECT d.*,
                 u.first_name || ' ' || u.last_name AS coordinator_name,
+                a.name AS area_name, a.id AS area_id,
                 (SELECT COUNT(*) FROM users WHERE department_id = d.id AND is_active = 1) AS staff_count,
                 (SELECT COUNT(*) FROM teams WHERE department_id = d.id AND is_active = 1)  AS team_count
          FROM departments d
          JOIN users u ON d.coordinator_id = u.id
+         LEFT JOIN areas a ON d.area_id = a.id
          WHERE d.is_active = 1
          ORDER BY d.name`
       );
@@ -67,10 +69,12 @@ router.get('/', authenticate, async (req, res) => {
       rows = await db.all(
         `SELECT d.*,
                 u.first_name || ' ' || u.last_name AS coordinator_name,
+                a.name AS area_name, a.id AS area_id,
                 (SELECT COUNT(*) FROM users WHERE department_id = d.id AND is_active = 1) AS staff_count,
                 (SELECT COUNT(*) FROM teams WHERE department_id = d.id AND is_active = 1)  AS team_count
          FROM departments d
          JOIN users u ON d.coordinator_id = u.id
+         LEFT JOIN areas a ON d.area_id = a.id
          WHERE d.coordinator_id = ? AND d.is_active = 1
          ORDER BY d.name`,
         [req.user.id]
@@ -109,8 +113,12 @@ router.post('/', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Non autorizzato a creare reparti.' });
 
     const { name, code, notes, coordinator_id, area_id } = req.body;
-    if (!name || !code)
-      return res.status(400).json({ error: 'name e code obbligatori.' });
+    if (!name)
+      return res.status(400).json({ error: 'name obbligatorio.' });
+
+    const safeCode = code
+      ? code.toUpperCase()
+      : name.toUpperCase().replace(/\s+/g, '_').slice(0, 10) + '_' + Date.now().toString().slice(-4);
 
     const effectiveCoordId = canSpecifyCoord && coordinator_id
       ? coordinator_id
@@ -119,7 +127,7 @@ router.post('/', authenticate, async (req, res) => {
     const ins = await db.run(
       `INSERT INTO departments (name, code, coordinator_id, area_id, notes)
        VALUES (?, ?, ?, ?, ?)`,
-      [name, code.toUpperCase(), effectiveCoordId, area_id || null, notes || null]
+      [name, safeCode, effectiveCoordId, area_id || null, notes || null]
     );
     const row = await db.get(
       `SELECT d.*, u.first_name || ' ' || u.last_name AS coordinator_name

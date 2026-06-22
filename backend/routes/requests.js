@@ -46,15 +46,39 @@ router.get('/', authenticate, async (req, res) => {
 
 router.post('/', authenticate, async (req, res) => {
   try {
-    const { request_type_id, start_date, end_date, shift_type_id, notes } = req.body;
+    const { request_type_id, start_date, end_date, shift_type_id, notes, on_behalf_of_user_id } = req.body;
 
-    const statusRow = await db.get('SELECT id FROM request_statuses WHERE code = ?', ['pending']);
+    // Il coordinatore può inserire richieste per un operatore del proprio reparto
+    let targetUserId = req.user.id;
+    if (on_behalf_of_user_id && (req.user.role === 'coordinator' || req.user.role === 'admin')) {
+      // Verifica che l'operatore appartenga al reparto del coordinatore
+      const op = await db.get(
+        `SELECT u.id FROM users u
+         JOIN departments d ON u.department_id = d.id
+         WHERE u.id = ? AND (d.coordinator_id = ? OR ? = 'admin')`,
+        [on_behalf_of_user_id, req.user.id, req.user.role]
+      );
+      if (!op) return res.status(403).json({ error: 'Operatore non nel tuo reparto' });
+      targetUserId = on_behalf_of_user_id;
+    }
+
+    // Se il coordinatore inserisce per un operatore → approva automaticamente
+    let statusCode = 'pending';
+    let approvedBy = null;
+    let approvedAt = null;
+    if (targetUserId !== req.user.id && (req.user.role === 'coordinator' || req.user.role === 'admin')) {
+      statusCode = 'approved';
+      approvedBy = req.user.id;
+      approvedAt = new Date().toISOString();
+    }
+
+    const statusRow = await db.get('SELECT id FROM request_statuses WHERE code = ?', [statusCode]);
     const statusId = statusRow.id;
 
     const insert = await db.run(
-      `INSERT INTO requests (user_id, request_type_id, status_id, start_date, end_date, shift_type_id, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [req.user.id, request_type_id, statusId, start_date, end_date || start_date, shift_type_id, notes]
+      `INSERT INTO requests (user_id, request_type_id, status_id, start_date, end_date, shift_type_id, notes, approved_by, approved_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [targetUserId, request_type_id, statusId, start_date, end_date || start_date, shift_type_id, notes, approvedBy, approvedAt]
     );
 
     const newRequest = await db.get(

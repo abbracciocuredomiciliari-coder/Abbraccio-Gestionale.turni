@@ -76,6 +76,9 @@ async function generateSchedule(year, month, departmentId = null, extraUnavailab
          (st.code IN ('N','N12')) AS is_night,
          st.required_skills, st.min_skilled_staff,
          COALESCE(dsc.required_staff,  st.required_staff)  AS required_staff,
+         st.required_staff_saturday,
+         st.required_staff_sunday,
+         st.required_staff_holiday,
          COALESCE(dsc.assignment_mode, 'FREE')             AS assignment_mode,
          COALESCE(dsc.min_capo_turno, 0)                  AS min_capo_turno,
          COALESCE(dsc.is_active, 1)                       AS config_active
@@ -89,6 +92,7 @@ async function generateSchedule(year, month, departmentId = null, extraUnavailab
   } else {
     shifts = await db.all(
       `SELECT id, code, name, duration_hours, required_staff,
+              required_staff_saturday, required_staff_sunday, required_staff_holiday,
               (code IN ('N','N12')) AS is_night,
               required_skills, min_skilled_staff,
               COALESCE(assignment_mode, 'FREE') AS assignment_mode,
@@ -146,7 +150,8 @@ async function generateSchedule(year, month, departmentId = null, extraUnavailab
   } catch (e) {
     // tabella potrebbe non esistere in ambienti non migrati
   }
-  const minRestHours = workRules.min_rest_between_shifts ?? 11;
+  const minRestHours       = workRules.min_rest_between_shifts ?? 11;
+  const maxConsecutiveDays  = workRules.max_consecutive_days ?? 6;
 
   // --- Carica start_time/end_time e weight_key per i turni ---
   const shiftDetails = await db.all(`SELECT id, start_time, end_time, weight_key FROM shift_types`);
@@ -284,6 +289,7 @@ async function generateSchedule(year, month, departmentId = null, extraUnavailab
     unavailability,
     allowOvertime: false,
     minRestHours,
+    maxConsecutiveDays,
     shiftWeights,
     skillMap: hasSkillReqs ? skillMap : null,
     teamData,

@@ -1,0 +1,10 @@
+feat: bilanciamento turni, vincoli hard riposo/consecutivi, richieste coordinatore
+
+- Solver: H-REST hard block riposo minimo inter-giornaliero (11h)
+- Solver: H14 hard block max giorni consecutivi (da work_rules)
+- Solver: bilanciamento cross-operatore per tipo turno (G12 vs M)
+- Solver: anti-clustering weekend sabato/domenica
+- Solver: jitter stocastico per rompere i pareggi
+- Requests: coordinatore puo inserire richieste per operatori con approvazione automatica
+- Schedule: pulsante Cancella Planning
+- ShiftConfig: modifica code e name turno

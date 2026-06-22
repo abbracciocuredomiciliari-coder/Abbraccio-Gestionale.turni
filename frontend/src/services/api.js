@@ -32,6 +32,15 @@ export const getRoles = () =>
 export const createUser = (data) =>
   api.post('/users', data);
 
+export const updateUser = (id, data) =>
+  api.patch(`/users/${id}`, data);
+
+export const deleteUser = (id) =>
+  api.delete(`/users/${id}`);
+
+export const generateLogin = (id, data) =>
+  api.post(`/users/${id}/generate-login`, data);
+
 export const getDepartments = () =>
   api.get('/departments');
 
@@ -68,14 +77,20 @@ export const rejectRequest = (id) =>
 export const getSchedules = () =>
   api.get('/schedules');
 
-export const getSchedule = (year, month) =>
-  api.get(`/schedules/${year}/${month}`);
+export const getSchedule = (year, month, department_id) =>
+  api.get(`/schedules/${year}/${month}`, { params: department_id ? { department_id } : {} });
 
 export const generateSchedule = (data) =>
   api.post('/schedules/generate', data);
 
 export const publishSchedule = (id) =>
   api.post(`/schedules/${id}/publish`);
+
+export const patchAssignment = (scheduleId, data) =>
+  api.patch(`/schedules/${scheduleId}/assignments`, data);
+
+export const deleteSchedule = (year, month, department_id) =>
+  api.delete(`/schedules/${year}/${month}`, { params: department_id ? { department_id } : {} });
 
 export const getShifts = () =>
   api.get('/shifts');

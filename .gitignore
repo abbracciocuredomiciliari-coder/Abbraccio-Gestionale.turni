@@ -150,3 +150,9 @@ backend/data/
 
 # Generated PDFs
 *.pdf
+
+# Script temporanei di fix/seed/test
+backend/fix-*.js
+backend/seed-demo.js
+backend/test-*.js
+backend/run-all-migrations.js

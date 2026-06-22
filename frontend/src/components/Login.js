@@ -23,18 +23,18 @@ function Login({ onLogin }) {
 
   return (
     <div className="min-h-screen flex">
-      {/* Pannello sinistro azzurro OPBG */}
+      {/* Pannello sinistro Abbraccio */}
       <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-primary-600 via-primary-500 to-primary-400 flex-col items-center justify-center p-12 relative overflow-hidden">
         {/* Cerchi decorativi */}
         <div className="absolute top-0 right-0 w-64 h-64 bg-white opacity-5 rounded-full -translate-y-1/3 translate-x-1/3"></div>
         <div className="absolute bottom-0 left-0 w-96 h-96 bg-white opacity-5 rounded-full translate-y-1/3 -translate-x-1/3"></div>
 
         <div className="relative z-10 text-center text-white max-w-sm">
-          {/* Logo OPBG reale */}
+          {/* Logo Abbraccio */}
           <div className="inline-flex items-center justify-center bg-white rounded-2xl mb-8 px-6 py-4 shadow-large">
-            <img src="/logo-opbg.png" alt="Bambino Gesù" className="h-16 w-auto" />
+            <img src="/logo.png" alt="Abbraccio" className="h-16 w-auto" />
           </div>
-          <h2 className="text-xl font-semibold mb-4 opacity-90">OPBGestionale</h2>
+          <h2 className="text-xl font-semibold mb-4 opacity-90">Abbraccio Gestione Turni</h2>
           <p className="text-base opacity-75 leading-relaxed">
             Sistema integrato di gestione turni e pianificazione del personale infermieristico
           </p>
@@ -62,16 +62,16 @@ function Login({ onLogin }) {
           {/* Header mobile */}
           <div className="lg:hidden text-center mb-8">
             <div className="inline-flex items-center justify-center bg-white rounded-2xl mb-4 px-5 py-3 shadow-soft border border-secondary-100">
-              <img src="/logo-opbg.png" alt="Bambino Gesù" className="h-10 w-auto" />
+              <img src="/logo.png" alt="Abbraccio" className="h-10 w-auto" />
             </div>
-            <h1 className="text-2xl font-bold text-secondary-900">OPBGestionale</h1>
+            <h1 className="text-2xl font-bold text-secondary-900">Abbraccio Gestione Turni</h1>
           </div>
 
           {/* Card */}
           <div className="bg-white rounded-2xl shadow-large p-8">
             <div className="mb-8">
               <div className="hidden lg:flex justify-center mb-5">
-                <img src="/logo-opbg.png" alt="Bambino Gesù" className="h-12 w-auto" />
+                <img src="/logo.png" alt="Abbraccio" className="h-12 w-auto" />
               </div>
               <h2 className="text-2xl font-bold text-secondary-900">Bentornato</h2>
               <p className="text-secondary-500 mt-1">Accedi al tuo account per continuare</p>
@@ -156,7 +156,7 @@ function Login({ onLogin }) {
           </div>
 
           <p className="text-center text-xs text-secondary-400 mt-6">
-            © 2024 Ospedale Pediatrico Bambino Gesù · OPBGestionale
+            © 2026 Abbraccio Cure Domiciliari · Gestione Turni
           </p>
         </div>
       </div>

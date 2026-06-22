@@ -43,17 +43,17 @@ function Dashboard({ user, onLogout }) {
 
   return (
     <div className="min-h-screen bg-secondary-50">
-      {/* Header azzurro OPBG */}
+      {/* Header Abbraccio */}
       <header className="bg-gradient-to-r from-primary-600 to-primary-500 shadow-medium">
         <div className="container">
           <div className="flex items-center justify-between py-3">
             {/* Logo + titolo */}
             <div className="flex items-center space-x-3">
               <div className="bg-white rounded-xl px-3 py-1.5 shadow-soft">
-                <img src="/logo-opbg.png" alt="Bambino Gesù" className="h-7 w-auto" />
+                <img src="/logo.png" alt="Abbraccio" className="h-7 w-auto" />
               </div>
               <div>
-                <h1 className="text-lg font-bold text-white leading-none">OPBGestionale</h1>
+                <h1 className="text-lg font-bold text-white leading-none">Abbraccio Gestione Turni</h1>
                 <p className="text-xs text-primary-200 mt-0.5">Gestione turni infermieristici</p>
               </div>
             </div>
